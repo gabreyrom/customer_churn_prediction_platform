@@ -1,0 +1,24 @@
+# Data (raw downloads and processed outputs are never committed)
+data/
+*.xlsx
+*.xls
+*.csv
+*.parquet
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Secrets
+.env
+.env.*
+.streamlit/secrets.toml
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
