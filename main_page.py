@@ -13,12 +13,12 @@ with left, st.container(border=True):
     st.file_uploader("Transaction file (CSV or Excel)", type=["csv", "xlsx"], disabled=True)
     st.caption(
         "**Not yet available.** Uploaded files are not processed in this version. "
-        "Use the demo to preview the results view with illustrative mock data."
+        "Explore the customer status view built from the Online Retail II dataset instead."
     )
 with right, st.container(border=True):
-    st.subheader("Try the demo")
-    st.write("Preview the customer status view with illustrative mock data.")
-    if st.button("Open results with demo data", type="primary", width="stretch"):
+    st.subheader("Explore the dataset")
+    st.write("See customer status computed from Online Retail II (UCI), Dec 2009 – Dec 2011.")
+    if st.button("Open customer status", type="primary", width="stretch"):
         st.switch_page("results_page.py")
     with st.popover("Explore continuous monitoring", width="stretch"):
         st.markdown(

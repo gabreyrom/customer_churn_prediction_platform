@@ -4,6 +4,8 @@ data/
 *.xls
 *.csv
 *.parquet
+# Compact processed files built by prepare_data.py are committed
+!processed/*.csv.gz
 
 # Python
 .venv/
