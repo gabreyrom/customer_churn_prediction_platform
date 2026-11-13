@@ -8,9 +8,13 @@ who is **engaged**, who is **approaching dormancy**, and who is already **dorman
 to help a retention team decide whom to contact when it can reach only a limited number of
 customers.
 
-> **Current stage: Submission 5.** The website runs on the real **Online Retail II** data
-> (cleaned, invoice level). Customer status and the watchlist are **rule-based**. No dormancy
-> model has been trained yet. See [Project status](#project-status).
+> **Current stage: November 19 milestone (offline model evaluation).** The website runs on the real
+> **Online Retail II** data (cleaned, invoice level). Customer status and the watchlist are
+> **rule-based**. Dormancy-risk models, their calibration, and top-N targeting are evaluated
+> **offline only** (see [Offline modeling](#offline-modeling)); the website does not display model
+> predictions or evaluation results. See [Project status](#project-status).
+>
+> **Live site:** https://gabriel-reynoso-customer-churn.streamlit.app (rule-based status and watchlist; no model predictions).
 
 ---
 
@@ -21,8 +25,9 @@ customers.
 3. [Dataset](#dataset)
 4. [Quick start](#quick-start)
 5. [Website tour](#website-tour)
-6. [Project status](#project-status)
-7. [Repository structure](#repository-structure)
+6. [Offline modeling](#offline-modeling)
+7. [Project status](#project-status)
+8. [Repository structure](#repository-structure)
 
 ---
 
@@ -193,6 +198,57 @@ The earlier mock-data version is in [`artifacts/submission4/`](artifacts/submiss
 
 ---
 
+## Offline modeling
+
+Dormancy-risk models and their evaluation. They run **offline**: nothing here is read by the Streamlit
+pages, and the deployed website (https://gabriel-reynoso-customer-churn.streamlit.app) still shows the
+rule-based watchlist.
+
+```bash
+python build_snapshots.py    # weekly snapshots + 30/60/90-day labels -> data/weekly_snapshots.csv.gz
+python train_baselines.py    # Nov 12 baselines -> processed/baseline_results.md, data/models/baselines.json
+python evaluate_models.py    # Nov 19 evaluation -> processed/model_evaluation.md, processed/reliability_eligible.png
+python test_snapshots.py && python test_baselines.py && python test_evaluation.py   # checks
+```
+
+The modeling scripts need pandas and numpy; `evaluate_models.py` also needs matplotlib
+(`pip install matplotlib`). These are not in `requirements.txt`, which lists only what the website needs.
+`evaluate_models.py` takes about 15 seconds. It also re-checks the snapshot pipeline on real data (an
+independent recomputation of 1,000 rows, and a truncation test for future data).
+
+- **Snapshots:** every Thursday from 4 Mar 2010 to 8 Dec 2011 (the last complete day), each customer who
+  is still active under the 90-day threshold. Features use only purchases up to the end of that day:
+  recency, tenure, frequency, and gross spend.
+- **Label:** the customer first reaches 90 days without a valid purchase within the next 30, 60 or 90
+  days. Outcomes that run past 8 Dec 2011 are **censored** and excluded, not counted as negative.
+  Method and audit: [`processed/snapshot_audit.md`](processed/snapshot_audit.md).
+- **Calendar split** (no random rows): train labels end by 31 Dec 2010, validation by 30 Jun 2011,
+  and test by 8 Dec 2011. Each label is fully observed before the next period starts.
+- **Nov 12 baselines:** a constant event rate, a recency-only logistic regression, and a recency +
+  tenure + frequency + monetary logistic regression. Recency was chosen on validation Brier score.
+  Results: [`processed/baseline_results.md`](processed/baseline_results.md).
+- **Nov 19 evaluation:** [`processed/model_evaluation.md`](processed/model_evaluation.md).
+  - **Populations:** each model is scored on all active customers and on customers *eligible* to cross the
+    threshold within the horizon (recency ≥ 90 − h).
+  - **Calibration:** reliability tables and a plot, plus calibration slopes.
+  - **Targeting:** weekly top-N (N = 50/100/200), compared with random selection and the website's own
+    recency rule.
+  - **Model study:** recalibration (Platt) and refitting on eligible customers. Fitting uses train,
+    calibration uses validation, and comparison uses test.
+  - **Main findings:**
+    - Overall metrics mostly reflect eligibility.
+    - The Nov 12 models are miscalibrated for eligible customers.
+    - Refitting on eligible customers or recalibrating improves probabilities.
+    - RFM's frequency, spend and tenure features are cumulative and drift over time.
+    - No model beats the website's recency ordering for short contact lists by more than about 2 points.
+- **The test period is not an untouched holdout.** It was first inspected on Nov 12, so every test result
+  from Nov 19 is **exploratory**. The data end in December 2011, so no later holdout exists. Confirming a
+  model needs a prospective (shadow) evaluation. The 90-day horizon is also exploratory.
+- **Top-N capture measures predictive targeting, not the effect of contacting customers.**
+- Generated tables, predictions and model files live in `data/`, which is gitignored.
+
+---
+
 ## Project status
 
 | Area | Status |
@@ -203,12 +259,17 @@ The earlier mock-data version is in [`artifacts/submission4/`](artifacts/submiss
 | Rule-based top-N watchlist | ✅ Works. A rule, not a prediction |
 | File upload | ⏳ Shown as disabled. Not functional |
 | Time-aware use of cancellations and returns | ⏳ Planned |
-| Dormancy risk model, calibration, alert-timing evaluation | ⏳ Planned |
-| Deployment to Streamlit Community Cloud | ⏳ Next step |
+| Weekly snapshots, censoring-aware labels, calendar split | ✅ Done, offline (`build_snapshots.py`) |
+| Initial logistic-regression baselines (AUC, Brier) | ✅ Done, offline (`train_baselines.py`). Not shown on the site |
+| Calibration, eligible-group and top-N evaluation; recalibration study | ✅ Done, offline (`evaluate_models.py`). Test results exploratory |
+| Window-stable features and a prospective holdout | ⏳ Next step |
+| Alert-timing evaluation | ⏳ Planned |
+| Model predictions on the website | ⏳ Planned. The site still shows the rule-based watchlist |
+| Deployment to Streamlit Community Cloud | ✅ Live at https://gabriel-reynoso-customer-churn.streamlit.app (rule-based watchlist only) |
 | Continuous monitoring integration | ❌ Out of scope for the course |
 
-No model has been trained. The site does not report any accuracy, calibration, probability, or
-outreach-effect values.
+All modeling is offline. The website does not show any model probability, accuracy, calibration,
+or outreach-effect values.
 
 ---
 
@@ -220,12 +281,20 @@ outreach-effect values.
 ├── main_page.py            # Landing page
 ├── results_page.py         # Customer status dashboard (segments, watchlist, timeline)
 ├── prepare_data.py         # Rebuilds processed/ from the raw UCI workbook
-├── processed/              # invoices.csv.gz (used by the site), cancellations.csv.gz, data_quality.md
+├── build_snapshots.py      # Offline: weekly snapshots and 30/60/90-day dormancy labels
+├── train_baselines.py      # Offline: split comparison and logistic-regression baselines
+├── evaluate_models.py      # Offline: calibration, eligible-group and top-N evaluation, recalibration study
+├── test_snapshots.py       # Checks for labels, resets, censoring
+├── test_baselines.py       # Checks for predictor allowlist and split boundaries
+├── test_evaluation.py      # Checks for eligibility, role boundaries, calibration separation, top-N
+├── processed/              # invoices.csv.gz (used by the site), cancellations.csv.gz, data_quality.md,
+│                           #   snapshot_audit.md, baseline_results.md, model_evaluation.md,
+│                           #   reliability_eligible.png
 ├── requirements.txt        # streamlit, pandas, altair
 ├── .streamlit/config.toml  # Theme
 ├── artifacts/submission5/  # Current screenshots of both pages
 ├── artifacts/submission4/  # Screenshots of the earlier mockup
-├── .gitignore              # Ignores data/ (raw workbook), virtual environments, caches, and secrets
+├── .gitignore              # Ignores data/ (raw workbook, snapshots, models), virtual environments, caches, and secrets
 └── README.md
 ```
 
