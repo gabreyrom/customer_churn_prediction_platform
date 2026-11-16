@@ -1,18 +1,11 @@
-from datetime import timedelta
-
 import altair as alt
 import pandas as pd
 import streamlit as st
 
-SOURCE = "Online Retail II (UCI), cleaned: valid purchases only"
+from shared import SOURCE, controls, load_invoices, show_timeline
+
 WARNING_WINDOW = 30  # days before the threshold that count as "approaching"
 COLORS = {"Engaged": "#4a7fb0", "Approaching dormancy": "#d9a441", "Dormant": "#9a9a9a"}
-
-
-@st.cache_data
-def load_invoices():
-    """One row per valid purchase invoice, built by prepare_data.py from the UCI workbook."""
-    return pd.read_csv("processed/invoices.csv.gz", dtype={"customer": str, "invoice": str}, parse_dates=["date"])
 
 
 def classify(recency, threshold):
@@ -30,9 +23,7 @@ st.title("Customer Status")
 st.caption(f"{SOURCE}. Status is relative to the chosen “as of” date inside the dataset, not to today.")
 
 c1, c2, c3 = st.columns(3)
-threshold = c2.selectbox("Dormancy threshold (days without a valid purchase)", [60, 90, 120], index=1)
-as_of = c1.date_input("“As of” observation date", DATA_END,
-                      min_value=DATA_START + timedelta(days=threshold), max_value=DATA_END)
+as_of, threshold = controls(c1, c2, DATA_START, DATA_END)
 top_n = c3.slider("Contact-list size N", 5, 30, 10)
 
 st.info(
@@ -109,17 +100,7 @@ st.subheader("Selected customer purchase timeline")
 default = priority.index[0] if len(priority) else rfm.index[0]
 cust = st.selectbox("Customer", rfm.index, index=list(rfm.index).index(default))
 ct = tx[tx["customer"] == cust]
-bars = alt.Chart(ct).mark_bar(width=3, color="#1f4e79").encode(
-    alt.X("date:T", title="Invoice date", scale=alt.Scale(domain=[str(DATA_START), str(as_of)])),
-    alt.Y("amount:Q", title="Invoice amount (£)"),
-    tooltip=["invoice:N", "date:T", "amount:Q"],
-)
-marks = pd.DataFrame({"date": [pd.Timestamp(as_of), ct["date"].max().normalize() + pd.Timedelta(days=threshold)],
-                      "label": ["As of", "Dormancy point"]})
-lines = alt.Chart(marks).mark_rule(strokeDash=[4, 4]).encode(
-    x="date:T", color=alt.Color("label:N", scale=alt.Scale(range=["#1c2430", "#b03a2e"]), title=None)
-)
-st.altair_chart((bars + lines).properties(height=240), width="stretch")
+show_timeline(ct, DATA_START, as_of, threshold)
 r = rfm.loc[cust]
 st.caption(f"Customer {cust}: recency {r.recency} days · frequency {r.frequency} · monetary £{r.monetary:,.2f} · **{r.status}**")
 
