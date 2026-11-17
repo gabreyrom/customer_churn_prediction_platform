@@ -29,7 +29,16 @@ NEW_DAYS = 30       # tenure below this = recently acquired (flag)
 MIN_PRIOR = 270     # days of data needed before a first observed purchase to call it an acquisition
 REFERENCE_MIN_TENURE = 90  # reference customers need this much observed tenure; unrelated to the NEW_DAYS flag
 MIN_REFERENCE = 100  # fewer pooled reference rows than this: no cutoffs, no segments
-REFERENCE_DATES = pd.date_range("2010-12-02", "2010-12-30", freq="7D")  # Thursdays; window complete from 1 Dec 2010
+REFERENCE_COUNT = 5  # weekly reference dates
+
+
+def reference_dates(data_start):
+    """The first REFERENCE_COUNT weekly dates on which a full WINDOW of history exists behind every purchase counted:
+    data start + WINDOW + 1 days, then weekly. The same rule for any dataset; nothing later than these dates is used."""
+    return pd.date_range(pd.Timestamp(data_start).normalize() + pd.Timedelta(days=WINDOW + 1), periods=REFERENCE_COUNT, freq="7D")
+
+
+REFERENCE_DATES = reference_dates("2009-12-01")  # Online Retail II: Thursdays 2 – 30 Dec 2010
 NEW = "Recently acquired"
 NAMES = {  # (R, F, M) high/low -> name
     "HHH": "Core customers",

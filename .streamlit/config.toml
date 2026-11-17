@@ -7,3 +7,6 @@ textColor = "#1c2430"
 
 [browser]
 gatherUsageStats = false
+
+[server]
+maxUploadSize = 100  # MB; see upload.MAX_UPLOAD_MB and the README for why

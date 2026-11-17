@@ -4,17 +4,20 @@ import pandas as pd
 import streamlit as st
 
 import segments as sg
-from shared import SOURCE, controls, load_invoices, show_timeline
+from shared import controls, dataset, show_timeline
 
 # Position on the chart shows recency and frequency, so color only has to carry the spend level.
 GROUPS = {"High spend (M high)": "#2a78d6", "Lower spend (M low)": "#1baf7a"}
 
-all_tx = load_invoices()
+all_tx, DATA = dataset()
+CUR = DATA["currency"]
 DATA_START, DATA_END = all_tx["date"].min().date(), all_tx["date"].max().date()
-REF_START, REF_END = sg.REFERENCE_DATES.min(), sg.REFERENCE_DATES.max()
+REFS = sg.reference_dates(DATA_START)   # Online Retail II: 2 – 30 Dec 2010; an uploaded file gets its own dates
+REF_START, REF_END = REFS.min(), REFS.max()
+REF_DATES = ", ".join(f"{d:%d %b %Y}" for d in REFS)
 
 st.title("Customer Segments")
-st.caption(f"{SOURCE}. RFM lifecycle segments for customers who are active on the chosen observation date.")
+st.caption(f"{DATA['source']}. RFM lifecycle segments for customers who are active on the chosen observation date.")
 st.warning(
     "**Descriptive behavioral groups.** Segments summarize past purchases up to the observation date. They are not "
     "model-generated dormancy probabilities, a segment is not a permanent label, and membership says nothing about "
@@ -25,6 +28,12 @@ st.warning(
 c1, c2 = st.columns(2)
 as_of, threshold = controls(c1, c2, DATA_START, DATA_END)
 
+if pd.Timestamp(DATA_END) < REF_END:
+    st.error(
+        f"**No segments for this dataset.** Frequency and spend use the last {sg.WINDOW} days, and the cutoffs come from "
+        f"the first weeks after a full {sg.WINDOW}-day window exists. That needs purchases through {REF_END:%d %b %Y}; "
+        f"this dataset ends on {DATA_END:%d %b %Y}. Customer status still works.", icon="🚫")
+    st.stop()
 if pd.Timestamp(as_of) < REF_END:
     st.error(
         f"**No segments for {as_of:%d %b %Y}.** The cutoffs are learned from purchases up to {REF_END:%d %b %Y} "
@@ -35,9 +44,10 @@ if pd.Timestamp(as_of) < REF_END:
         icon="🚫",
     )
     st.stop()
-cuts = sg.cutoffs(all_tx, as_of, threshold)
+cuts = sg.cutoffs(all_tx, as_of, threshold, REFS)
 if cuts is None:
-    st.error(f"Segments are not available: fewer than {sg.MIN_REFERENCE} reference customers to set cutoffs.")
+    st.error(f"Segments are not available: fewer than {sg.MIN_REFERENCE} reference customer rows to set cutoffs "
+             f"(active customers first observed at least {sg.REFERENCE_MIN_TENURE} days earlier, on {REF_DATES}).")
     st.stop()
 table = sg.rfm_table(all_tx, as_of)
 act = sg.assign(table, cuts, threshold)
@@ -45,13 +55,14 @@ summ = sg.summary(act)
 
 st.info(
     f"**As of:** {as_of:%d %b %Y} (purchases after this date are not used) · **Dormancy threshold:** {threshold} days · "
-    f"**Reference period:** {REF_START:%d %b} – {REF_END:%d %b %Y} ({len(sg.REFERENCE_DATES)} weekly dates, "
-    f"{', '.join(f'{d:%d}' for d in sg.REFERENCE_DATES)} Dec; {cuts['n']:,} customer rows)\n\n"
+    f"**Reference dates** (from this dataset): {REF_DATES} ({cuts['n']:,} customer rows)\n\n"
     f"**Cutoffs (reference medians, fixed for every later date):** high R = last purchase ≤ **{cuts['recency']:g} days** "
     f"ago · high F = ≥ **{cuts['frequency']:g} invoices** in the last {sg.WINDOW} days · high M = ≥ "
-    f"**£{cuts['monetary']:,.2f}** in the last {sg.WINDOW} days. A value equal to a cutoff counts as high.\n\n"
-    "**Read with care:** the reference dates are all in December, a seasonal peak followed by a quiet week, so the share "
-    f"of high-R customers shifts through the year. Customers first observed less than {sg.WINDOW} days ago are compared "
+    f"**{CUR}{cuts['monetary']:,.2f}** in the last {sg.WINDOW} days. A value equal to a cutoff counts as high.\n\n"
+    "**Read with care:** "
+    + ("the reference dates are all in December, a seasonal peak followed by a quiet week, so the share "
+       if DATA["bundled"] else "the reference dates cover a single month, which may not be typical of the year, so the share ")
+    + f"of high-R customers shifts through the year. Customers first observed less than {sg.WINDOW} days ago are compared "
     "on less than a year of invoices and lean towards low F and low M.",
     icon="📅",
 )
@@ -89,7 +100,7 @@ with right:
             "new": st.column_config.NumberColumn(sg.NEW, help="Customers in the segment carrying the flag"),
             "recency": st.column_config.NumberColumn("Median recency (days)", format="%.0f"),
             "frequency": st.column_config.NumberColumn(f"Median invoices ({sg.WINDOW} d)", format="%.1f"),
-            "monetary": st.column_config.NumberColumn(f"Median spend ({sg.WINDOW} d, £)", format="%.0f"),
+            "monetary": st.column_config.NumberColumn(f"Median spend ({sg.WINDOW} d{', ' + CUR if CUR else ''})", format="%.0f"),
             "tenure": st.column_config.NumberColumn("Median observed tenure (days)", format="%.0f"),
         },
     )
@@ -113,7 +124,7 @@ scatter = alt.Chart(pts).mark_circle(size=28, opacity=0.55).encode(
     tooltip=[alt.Tooltip("customer:N", title="Customer"), alt.Tooltip("segment:N", title="Segment"),
              alt.Tooltip("code:N", title="R F M"), alt.Tooltip("flag:N", title=sg.NEW), alt.Tooltip("recency:Q", title="Recency (days)"),
              alt.Tooltip("frequency:Q", title=f"Invoices ({sg.WINDOW} d)"),
-             alt.Tooltip("monetary:Q", title=f"Spend ({sg.WINDOW} d, £)", format=",.2f"),
+             alt.Tooltip("monetary:Q", title=f"Spend ({sg.WINDOW} d{', ' + CUR if CUR else ''})", format=",.2f"),
              alt.Tooltip("tenure:Q", title="Observed tenure (days)")],
 )
 rule = lambda enc, v: alt.Chart(pd.DataFrame({"v": [v]})).mark_rule(strokeDash=[4, 4], color="#52514e").encode(**{enc: "v:Q"})
@@ -140,8 +151,8 @@ cust = members.index[(picked.selection.rows or [0])[0]]
 r = members.loc[cust]
 st.markdown(f"**Customer {cust} purchase timeline** (up to {as_of:%d %b %Y})")
 ct = all_tx[(all_tx["customer"] == cust) & (all_tx["date"] < pd.Timestamp(as_of) + pd.Timedelta(days=1))]
-show_timeline(ct, DATA_START, as_of, threshold)
-st.caption(f"Customer {cust}: recency {r.recency} days · {r.frequency} invoices and £{r.monetary:,.2f} in the last "
+show_timeline(ct, DATA_START, as_of, threshold, CUR)
+st.caption(f"Customer {cust}: recency {r.recency} days · {r.frequency} invoices and {CUR}{r.monetary:,.2f} in the last "
            f"{sg.WINDOW} days · first observed purchase {r.tenure} days before the as-of date · **{r.segment}** ({r.code})"
            + (f" · {sg.NEW} (flag)" if r.new else ""))
 
@@ -149,7 +160,7 @@ with st.expander("Segment definitions and limitations"):
     st.markdown(
         f"""
 **Recency** – days from the last valid purchase to the observation date. **Frequency** – distinct valid invoices in the
-{sg.WINDOW} days up to the observation date. **Monetary** – gross spend (£) on those invoices; returns are not netted.
+{sg.WINDOW} days up to the observation date. **Monetary** – gross spend on those invoices; returns are not netted.
 The Customer status page shows frequency and spend over the *whole* observed history; here a fixed {sg.WINDOW}-day
 window is used so the same cutoff means the same thing on every date.
 
@@ -161,17 +172,17 @@ window is used so the same cutoff means the same thing on every date.
         + f"""
 
 - **Cutoffs** are medians among customers who were active, and first observed at least {sg.REFERENCE_MIN_TENURE} days
-  earlier, on {len(sg.REFERENCE_DATES)} weekly dates in December 2010, the first dates with a full {sg.WINDOW}-day window.
-  They do not change with the observation date.
+  earlier, on {len(REFS)} weekly dates ({REF_DATES}), the first dates with a full {sg.WINDOW}-day window in this
+  dataset. They do not change with the observation date, and they are never taken from another dataset.
 - **{sg.NEW}** is a flag, not a segment: first observed purchase less than {sg.NEW_DAYS} days before the observation
   date, with at least {sg.MIN_PRIOR} days of data before that purchase. Flagged customers keep their RFM segment. The
   first *observed* purchase may not be the customer's true first purchase: the data start on {DATA_START:%d %b %Y}.
 - **Shorter history.** Customers first seen less than {sg.WINDOW} days ago are compared on less than a year of invoices,
   so they lean towards low F and low M.
-- **Seasonality.** The reference dates are all in December: heavy buying early in the month, very little in the last
-  week. The recency cutoff reflects that, and the share of high-R customers changes with the time of year.
+- **Seasonality.** The reference dates cover one month ({REF_START:%B %Y}){": heavy buying early in the month, very little in the last week" if DATA["bundled"] else ""}.
+  The recency cutoff reflects that month, and the share of high-R customers changes with the time of year.
 - Small segments have unstable medians.
-- Later dormancy rates by segment are reported offline in `processed/segment_evaluation.md`. They are not shown here
-  because they would not be known on the observation date.
+- Later dormancy rates by segment are reported offline for Online Retail II in `processed/segment_evaluation.md`. They
+  are not shown here because they would not be known on the observation date.
 """
     )

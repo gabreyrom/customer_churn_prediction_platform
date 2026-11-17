@@ -8,15 +8,18 @@ who is **engaged**, who is **approaching dormancy**, and who is already **dorman
 to help a retention team decide whom to contact when it can reach only a limited number of
 customers.
 
-> **Current stage: November 19 milestone (offline model evaluation and RFM lifecycle segments).** The
-> website runs on the real **Online Retail II** data (cleaned, invoice level). Customer status and the
-> watchlist are **rule-based**; the new **Customer segments** page shows descriptive
-> [RFM lifecycle segments](#rfm-lifecycle-segments). Dormancy-risk models, their calibration, and top-N targeting are evaluated
-> **offline only** (see [Offline modeling](#offline-modeling)); the website does not display model
-> predictions or evaluation results. See [Project status](#project-status).
+> **Current stage: November 26 milestone (alert timing, model sensitivity, compatible datasets).**
 >
-> **Live site:** https://gabriel-reynoso-customer-churn.streamlit.app (rule-based status and watchlist; no model predictions;
-> the segments page appears once this milestone is deployed).
+> - **On the website:** rule-based customer status and watchlist, descriptive
+>   [RFM lifecycle segments](#rfm-lifecycle-segments), an [upload workflow](#using-your-own-data) for
+>   descriptive analysis of your own transactions, and two clearly labeled analysis pages:
+>   [Alert timing](#alert-timing) (an offline report, shown as generated) and
+>   [Model sensitivity](#model-sensitivity) (interactive, hypothetical input values only).
+> - **Not on the website:** predicted risk for any customer. The dormancy-risk models are exploratory and
+>   **not validated** (see [Offline modeling](#offline-modeling)), and they are never applied to uploaded data.
+> - See [Project status](#project-status) for what works where.
+>
+> **Live site:** https://gabriel-reynoso-customer-churn.streamlit.app (shows the last deployed milestone).
 
 ---
 
@@ -28,9 +31,12 @@ customers.
 4. [Quick start](#quick-start)
 5. [Website tour](#website-tour)
 6. [RFM lifecycle segments](#rfm-lifecycle-segments)
-7. [Offline modeling](#offline-modeling)
-8. [Project status](#project-status)
-9. [Repository structure](#repository-structure)
+7. [Using your own data](#using-your-own-data)
+8. [Alert timing](#alert-timing)
+9. [Model sensitivity](#model-sensitivity)
+10. [Offline modeling](#offline-modeling)
+11. [Project status](#project-status)
+12. [Repository structure](#repository-structure)
 
 ---
 
@@ -162,10 +168,10 @@ Current screenshots are in [`artifacts/submission5/`](artifacts/submission5/).
 ### 1. Main page (sidebar: "Home")
 
 - **Headline and introduction:** "Protect Your Customer Lifecycle".
-- **Upload transaction data:** shown but **disabled**, and labeled *Not yet available*.
+- **Upload transaction data:** opens the Data page, where a CSV is checked before it is used.
 - **Open customer status:** opens the results page.
 - **Explore continuous monitoring:** informational only, **not implemented**.
-- **What you'll see:** a preview of the features. Dormancy risk is marked **Planned**.
+- **What you'll see:** a preview of the features. Dormancy-risk models are marked **Offline analysis**.
 
 ### 2. Customer status
 
@@ -193,8 +199,8 @@ What the page shows:
   chart, *Dormancy date if there is no further purchase* = the latest purchase on or before the as-of
   date plus the selected threshold. It is a calendar rule, not a model prediction. If that date has
   already passed, it is marked on the chart and described as reached.
-- **Future dormancy risk:** prediction, model comparison, calibration and alert timing are all
-  marked **Planned**.
+- **Future dormancy risk:** a note that no customer is scored, pointing to the Alert timing and Model
+  sensitivity pages.
 
 ![Main page](artifacts/submission5/main_page.png)
 
@@ -222,6 +228,25 @@ Descriptive RFM lifecycle segments for customers who are **active** on the chose
 - **Inspect a segment:** pick a segment, click a customer row, and see the same purchase timeline and
   conditional dormancy date as on the status page.
 - Segments are **not** dormancy probabilities, and say nothing about the effect of contacting a customer.
+
+### 4. Alert timing
+
+Shows [`processed/alert_timing.md`](processed/alert_timing.md) exactly as generated offline, under a notice
+that it is a retrospective analysis of Online Retail II and says nothing about the effect of an alert. It
+does not use the shared date or threshold. See [Alert timing](#alert-timing).
+
+### 5. Model sensitivity
+
+Interactive. Pick a forecast horizon, enter two hypothetical customer profiles, and see what the model's
+equation returns for each, plus one-input-at-a-time charts. No real customer is scored. See
+[Model sensitivity](#model-sensitivity).
+
+### 6. Data
+
+Shows the dataset in use, and lets you upload, map, check and switch to your own CSV, or switch back to
+Online Retail II. See [Using your own data](#using-your-own-data).
+
+The shared observation date and dormancy threshold are kept while you visit these three pages.
 
 ---
 
@@ -332,22 +357,174 @@ shown on the website, because later outcomes are not known on the observation da
 
 ---
 
+## Using your own data
+
+**Data** page → upload a CSV → map the columns → **Check this file** → **Use this dataset**.
+The page offers two downloads: **Download minimum CSV template** (the four columns `customer`, `invoice`,
+`date`, `amount`; one row per invoice; synthetic; passes every check and has enough history for segments)
+and a separate sample file with extra columns and invalid rows for trying the quality checks. Upload
+guidelines sit next to the buttons. The status and
+segments pages then run on your file until you switch back or close the page. Online Retail II is always
+available. Code: [`upload.py`](upload.py), [`data_page.py`](data_page.py).
+
+### Canonical invoice table
+
+Every page works from one table with one row per valid purchase invoice, the format of
+`processed/invoices.csv.gz`:
+
+| Column | Meaning |
+|---|---|
+| `customer` | Customer identifier, kept as text |
+| `invoice` | Invoice / transaction identifier, unique |
+| `date` | Earliest timestamp of the invoice |
+| `amount` | Gross amount of the invoice |
+
+### What you provide
+
+- **A CSV** up to 100 MB; comma, semicolon, tab or pipe separated; UTF-8 or Latin-1. Excel files are not
+  read (that would add a dependency); export to CSV first.
+- **Four mapped columns:** customer identifier, invoice identifier, date, purchase amount. Optionally a
+  **quantity** column, in which case amount = quantity × the mapped (unit price) column. The page guesses
+  the mapping from the column names and you can change it.
+- **What a row is:**
+  - *One row per invoice line* (default when identifiers repeat): rows with the same invoice identifier
+    are added up into one invoice, with the earliest date. Identical rows are kept and counted, because
+    two products can look the same on the mapped columns.
+  - *One row per invoice:* a repeated identifier is a duplicate. Exact copies are dropped; identifiers
+    repeated with different values are excluded as a whole.
+- **Date order** is detected automatically (day first or month first) and can be forced. A column must use
+  one date format throughout. Amounts must use a decimal point.
+
+### Checks
+
+Rows are excluded and counted when: the customer or invoice identifier is missing; the date is missing,
+unreadable or after today; the amount is missing or not a number; the amount is zero or negative (returns,
+cancellations and free items are dropped, never netted, as for the bundled data). Invoices that list more
+than one customer are excluded.
+
+The file **cannot be used** when:
+
+- a required column is not mapped, is mapped twice, or is missing;
+- no valid rows remain, or more than 50% of the rows are excluded (usually a wrong mapping);
+- the purchases span fewer than 120 days (the largest dormancy threshold);
+- only one customer is found.
+
+The quality summary shows rows read, used and excluded by reason, invoices, customers, the date range, the
+total amount, rows per invoice, identical rows, the share of repeat customers and the first date on which
+segments are available.
+
+### Segments for uploaded data
+
+- Cutoffs are **never** the Online Retail II values. They are computed with the same rule from the
+  uploaded file: five weekly dates starting 366 days after its first purchase (for Online Retail II this
+  rule gives 2 – 30 Dec 2010).
+- Segments therefore need **394 days** of history and at least 100 reference customer rows. With less, the
+  status page works and the segments page explains why it cannot.
+- The single-month reference period can be unrepresentative of the year, as for the bundled data.
+
+### Limits
+
+- **No predictions for uploaded data.** The models were trained on one retailer and are not validated even
+  there. Another dataset needs its own training, or a transfer validation, first.
+- **Generic cleaning only.** The Online Retail II-specific rules (sheet overlap, same-day full
+  cancellations, test codes, postage-only invoices) are not applied. Uploading the raw UCI file as CSV
+  gives 36,969 invoices and 5,878 customers, against 36,496 and 5,851 in the bundled table.
+- **Session only.** The file is held in the app's memory for the browser session. It is not written to
+  disk, stored, or sent to another service, and it is gone after a reload. On the hosted site that memory
+  is on the hosting provider's server.
+- **Size and speed.** Tested locally with the raw UCI file (95 MB, 1.07 million rows): the check took about
+  4 seconds and the status and segments pages then loaded in about a second. The server process grew to
+  about 670 MB. Upload time on the hosted site depends on the connection and was not measured. A free
+  hosted app has limited memory shared by all visitors, so files near the 100 MB limit, or several large
+  uploads at once, may restart it. `maxUploadSize` in `.streamlit/config.toml` can be lowered.
+- Thresholds stay 60 / 90 / 120 days. A currency symbol is optional and only changes labels.
+
+---
+
+## Alert timing
+
+Report: [`processed/alert_timing.md`](processed/alert_timing.md), from `python alert_timing.py`. Offline,
+exploratory, Online Retail II only, 90-day threshold.
+
+- **Question:** what was knowable 60, 30 and 7 days before a dormancy event that was **later observed**?
+- **Matching:** scoring is weekly, so the alert date is the latest scoring date at least L days before the
+  event. The actual lead is L to L + 6 days and is reported. The row used is the customer's ordinary
+  snapshot on that date; the event date only decides which row to look at.
+- **Retrospective:** on the alert date nobody knew which customers these were. The report therefore also
+  gives the forward-looking counterpart: all customers in the same recency band on that date, and how many
+  became dormant.
+- **Populations and denominators:**
+  - Event-aligned tables: observed events with an alert date after 31 Dec 2010 (3,051 / 3,933 / 4,415 at
+    60 / 30 / 7 days), so the model coefficients were fitted on earlier data.
+  - Top-N: lists are ranked among all customers active that week; capture = captured events ÷ matched
+    events.
+  - Band tables: customer-dates in the band whose pending dormancy day is on or before 8 Dec 2011.
+- **Incomplete follow-up:** unobserved events cannot be aligned; band rows whose pending day is after
+  8 Dec 2011 are excluded and counted (2,245 / 735 / 176).
+- **Repeats and overlap:** each event counts once per lead, and a customer can have several events. Within
+  a table no row repeats, but rows are not independent and no intervals are given.
+- **Main findings:**
+  - Recency on the alert date is fixed by the lead (90 − lead). The website rule is silent 60 days ahead,
+    flags 13% of events 30 days ahead and all of them 7 days ahead.
+  - Top-200 lists capture 72% (website rule) and 64% (rfm model) of events 7 days ahead. At 60 days both
+    capture less than a random list, because the lists fill with customers nearer the threshold.
+  - Of customers 60–66 days from the threshold, 47% became dormant; at 30–36 days, 75%; at 7–13 days, 93%.
+    The recency model's mean risk is close to these rates; the rfm model's is lower.
+- **Not shown:** that an alert or contact keeps a customer active. That needs a randomized or otherwise
+  causal design.
+- **Needed before model-based alerts go on the website:** window-stable features, a model frozen before a
+  later (prospective) evaluation, calibration checked there, and a chosen alert threshold or list size.
+
+---
+
+## Model sensitivity
+
+Page: **Model sensitivity**. Report: [`processed/model_sensitivity.md`](processed/model_sensitivity.md).
+Code: [`sensitivity.py`](sensitivity.py).
+
+- **What it is:** how one model's output changes when its input values change. It is **not** a prediction
+  of what happens if a customer is contacted or changes behaviour.
+- **Model:** `rfm+platt` from the Nov 19 evaluation: logistic regression on recency, tenure, invoice
+  count and gross spend, then Platt recalibration. **Threshold:** 90 days. **Horizons:** 30, 60 and 90
+  days (90 is exploratory).
+- **Inputs** are the weekly-snapshot features, cumulative since the first observed purchase. They are not
+  the trailing 365-day values of the segments page.
+- **Eligibility:** at horizon h a recency below 90 − h cannot reach 90 days in time, so the output is
+  exactly 0, then jumps at the boundary. The page and report show this rather than smoothing it.
+- **Realistic profiles only:** recency 0–89; tenure ≥ recency; a single invoice requires tenure = recency;
+  spend > 0. Impossible profiles are rejected, and values outside the 1st–99th percentile of the training
+  customers are flagged as extrapolation.
+- **How the app gets the model:** `python sensitivity.py` writes
+  [`processed/sensitivity_model.json`](processed/sensitivity_model.json) (coefficients, scaling,
+  calibrator, training ranges; plain numbers, 4 KB). It asserts that these reproduce the evaluation
+  pipeline's predictions on all 195,217 snapshot rows. The page reads only that file.
+- **Limitations:** the test period had already been inspected and six candidates were compared on it; no
+  later independent holdout exists; cumulative inputs drift; the level is off in the test period
+  (60-day horizon: 0.745 predicted vs 0.700 observed); inputs do not move independently in real customers.
+- No customer on the website is scored, and the page says so.
+
+---
+
 ## Offline modeling
 
-Dormancy-risk models and their evaluation. They run **offline**: nothing here is read by the Streamlit
-pages, and the deployed website (https://gabriel-reynoso-customer-churn.streamlit.app) still shows the
-rule-based watchlist.
+Dormancy-risk models and their evaluation. They run **offline**. The website reads two of their outputs:
+the alert-timing report and the sensitivity coefficients. It still ranks customers with the rule-based
+watchlist and scores no customer.
 
 ```bash
 python build_snapshots.py    # weekly snapshots + 30/60/90-day labels -> data/weekly_snapshots.csv.gz
 python train_baselines.py    # Nov 12 baselines -> processed/baseline_results.md, data/models/baselines.json
 python evaluate_models.py    # Nov 19 evaluation -> processed/model_evaluation.md, processed/reliability_eligible.png
 python segments.py           # segment counts and later dormancy -> processed/segment_evaluation.md
-python test_snapshots.py && python test_baselines.py && python test_evaluation.py && python test_segments.py   # checks
+python alert_timing.py       # Nov 26 alert timing -> processed/alert_timing.md
+python sensitivity.py        # Nov 26 sensitivity -> processed/sensitivity_model.json, processed/model_sensitivity.md
+python test_snapshots.py && python test_baselines.py && python test_evaluation.py && python test_segments.py \
+  && python test_alerts.py && python test_sensitivity.py && python test_upload.py   # checks
 ```
 
 The modeling scripts need pandas and numpy; `evaluate_models.py` also needs matplotlib
-(`pip install matplotlib`). These are not in `requirements.txt`, which lists only what the website needs.
+(`pip install matplotlib`), and so do `alert_timing.py` and `sensitivity.py`, which reuse its model fitting.
+`test_segments.py`, `test_sensitivity.py` and `test_upload.py` also run the pages and need streamlit. These are not in `requirements.txt`, which lists only what the website needs.
 `evaluate_models.py` takes about 15 seconds. It also re-checks the snapshot pipeline on real data (an
 independent recomputation of 1,000 rows, and a truncation test for future data).
 
@@ -392,7 +569,7 @@ independent recomputation of 1,000 rows, and a truncation test for future data).
 | Data audit and cleaning of Online Retail II | ✅ Done (`prepare_data.py`, `processed/data_quality.md`) |
 | RFM status, segment counts, timelines on real data | ✅ Works |
 | Rule-based top-N watchlist | ✅ Works. A rule, not a prediction |
-| File upload | ⏳ Shown as disabled. Not functional |
+| Upload of compatible transaction data (CSV, column mapping, validation, own segment cutoffs) | ✅ On the website (`data_page.py`). Descriptive analysis only, session only |
 | Time-aware use of cancellations and returns | ⏳ Planned |
 | Weekly snapshots, censoring-aware labels, calendar split | ✅ Done, offline (`build_snapshots.py`) |
 | Initial logistic-regression baselines (AUC, Brier) | ✅ Done, offline (`train_baselines.py`). Not shown on the site |
@@ -401,13 +578,17 @@ independent recomputation of 1,000 rows, and a truncation test for future data).
 | Shared observation date and threshold across pages; conditional dormancy date on the timeline | ✅ Works |
 | Later dormancy by segment | ✅ Done, offline (`processed/segment_evaluation.md`) |
 | Window-stable features in the models and a prospective holdout | ⏳ Next step |
-| Alert-timing evaluation | ⏳ Planned |
-| Model predictions on the website | ⏳ Planned. The site still shows the rule-based watchlist |
+| Alert-timing analysis (60 / 30 / 7 days before observed dormancy) | ✅ Done, offline (`alert_timing.py`); report shown on the website. Retrospective, exploratory |
+| Model sensitivity | ✅ On the website for hypothetical inputs (`sensitivity_page.py`), plus an offline report. Model not validated |
+| Model-based alerts and per-customer predictions on the website | ⛔ Blocked: needs window-stable features and a prospective holdout. The site still shows the rule-based watchlist |
+| Predictions for uploaded data | ⛔ Not available: needs model training or transfer validation on that data |
+| Chatbot | ⏳ Scheduled for December 3 |
 | Deployment to Streamlit Community Cloud | ✅ Live at https://gabriel-reynoso-customer-churn.streamlit.app (rule-based watchlist only) |
 | Continuous monitoring integration | ❌ Out of scope for the course |
 
-All modeling is offline. The website does not show any model probability, accuracy, calibration,
-or outreach-effect values.
+All model fitting and evaluation is offline. The website shows model output only on the Model sensitivity
+page, for hypothetical inputs, and offline evaluation tables only on the Alert timing page. It shows no
+predicted risk for any customer and no outreach-effect values.
 
 ---
 
@@ -419,8 +600,14 @@ or outreach-effect values.
 ├── main_page.py            # Landing page
 ├── results_page.py         # Customer status dashboard (status, watchlist, timeline)
 ├── segments_page.py        # Customer segments page (RFM lifecycle segments)
+├── data_page.py            # Data page: dataset in use, CSV upload, column mapping, checks
+├── alerts_page.py          # Alert timing page: shows processed/alert_timing.md
+├── sensitivity_page.py     # Model sensitivity page (hypothetical inputs only)
+├── upload.py               # Uploaded table -> canonical invoice table, validation, template and sample files
+├── sensitivity.py          # Model equation from the stored coefficients; run it to rebuild them and the report
+├── alert_timing.py         # Offline: lead-time matching, event-aligned and band tables
 ├── segments.py             # RFM table, reference cutoffs, segment mapping, flag; run it for the offline summary
-├── shared.py               # Invoice loader, shared date/threshold controls and purchase timeline for both pages
+├── shared.py               # Dataset in use, shared date/threshold controls and purchase timeline
 ├── prepare_data.py         # Rebuilds processed/ from the raw UCI workbook
 ├── build_snapshots.py      # Offline: weekly snapshots and 30/60/90-day dormancy labels
 ├── train_baselines.py      # Offline: split comparison and logistic-regression baselines
@@ -430,11 +617,16 @@ or outreach-effect values.
 ├── test_evaluation.py      # Checks for eligibility, role boundaries, calibration separation, top-N
 ├── test_segments.py        # Checks for date boundaries, RFM values, cutoff ties, mapping, flag, timeline date,
 │                           #   shared controls, insufficient data (the page checks need streamlit)
+├── test_alerts.py          # Checks for lead matching, information boundaries, incomplete follow-up, top-N ties
+├── test_sensitivity.py     # Checks for the stored model, eligibility boundary, impossible profiles, page labels
+├── test_upload.py          # Checks for aggregation, row rules, duplicates, blocking errors, own cutoffs,
+│                           #   the minimum template, pages
 ├── processed/              # invoices.csv.gz (used by the site), cancellations.csv.gz, data_quality.md,
 │                           #   snapshot_audit.md, baseline_results.md, model_evaluation.md,
-│                           #   reliability_eligible.png, segment_evaluation.md
-├── requirements.txt        # streamlit, pandas, altair
-├── .streamlit/config.toml  # Theme
+│                           #   reliability_eligible.png, segment_evaluation.md, alert_timing.md,
+│                           #   model_sensitivity.md, sensitivity_model.json (read by the site)
+├── requirements.txt        # streamlit, pandas, altair, numpy
+├── .streamlit/config.toml  # Theme and upload size limit
 ├── artifacts/submission5/  # Current screenshots of both pages
 ├── artifacts/submission4/  # Screenshots of the earlier mockup
 ├── .gitignore              # Ignores data/ (raw workbook, snapshots, models), virtual environments, caches, and secrets

@@ -1,4 +1,4 @@
-"""Pieces used by more than one page: the invoice loader, the shared controls and the purchase timeline."""
+"""Pieces used by more than one page: the dataset in use, the shared controls and the purchase timeline."""
 from datetime import timedelta
 
 import altair as alt
@@ -7,13 +7,21 @@ import streamlit as st
 
 from segments import dormancy_date
 
-SOURCE = "Online Retail II (UCI), cleaned: valid purchases only"
+BUNDLED = {"name": "Online Retail II", "source": "Online Retail II (UCI), cleaned: valid purchases only",
+           "currency": "£", "bundled": True}
 
 
 @st.cache_data
 def load_invoices():
     """One row per valid purchase invoice, built by prepare_data.py from the UCI workbook."""
     return pd.read_csv("processed/invoices.csv.gz", dtype={"customer": str, "invoice": str}, parse_dates=["date"])
+
+
+def dataset():
+    """(invoices, info) for the dataset in use: the file uploaded in this browser session, else the bundled data.
+    Uploaded data live only in st.session_state: never cached across sessions, written to disk or sent anywhere."""
+    up = st.session_state.get("uploaded")
+    return (up["invoices"], up["info"]) if up else (load_invoices(), BUNDLED)
 
 
 def controls(date_col, threshold_col, data_start, data_end):
@@ -28,13 +36,14 @@ def controls(date_col, threshold_col, data_start, data_end):
         st.warning(f"The observation date was moved from {ss['as_of']:%d %b %Y} to {earliest:%d %b %Y}: a "
                    f"{ss['threshold']}-day threshold needs {ss['threshold']} days of history before the date.")
         ss["as_of"] = earliest
+    ss["as_of"] = min(ss["as_of"], data_end)  # the Data page resets the date when the dataset changes; this is a guard
     threshold = threshold_col.selectbox("Dormancy threshold (days without a valid purchase)", [60, 90, 120], key="threshold")
     as_of = date_col.date_input("Observation (“as of”) date", min_value=earliest, max_value=data_end, key="as_of",
                                 help="Shared with the other page. Only purchases on or before this date are used.")
     return as_of, threshold
 
 
-def show_timeline(ct, data_start, as_of, threshold):
+def show_timeline(ct, data_start, as_of, threshold, currency="£"):
     """One customer's observed invoices up to `as_of`, plus the conditional dormancy date as text.
     The dormancy date is drawn on the chart only when it is already in the past (on or before `as_of`)."""
     last = ct["date"].max().normalize()
@@ -42,7 +51,7 @@ def show_timeline(ct, data_start, as_of, threshold):
     reached = dormant_on <= pd.Timestamp(as_of)
     bars = alt.Chart(ct).mark_bar(width=3, color="#1f4e79").encode(
         alt.X("date:T", title="Invoice date", scale=alt.Scale(domain=[str(data_start), str(as_of)])),
-        alt.Y("amount:Q", title="Invoice amount (£)"),
+        alt.Y("amount:Q", title=f"Invoice amount ({currency})" if currency else "Invoice amount"),
         tooltip=["invoice:N", "date:T", "amount:Q"],
     )
     labels = ["As of", "Dormancy threshold reached"]

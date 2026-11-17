@@ -10,11 +10,12 @@ st.write("")
 left, right = st.columns([3, 2], gap="large")
 with left, st.container(border=True):
     st.subheader("Upload transaction data")
-    st.file_uploader("Transaction file (CSV or Excel)", type=["csv", "xlsx"], disabled=True)
-    st.caption(
-        "**Not yet available.** Uploaded files are not processed in this version. "
-        "Explore the customer status view built from the Online Retail II dataset instead."
-    )
+    st.write("Use your own purchase records (CSV) for descriptive analysis: customer status, the rule-based watchlist, "
+             "purchase timelines and RFM segments.")
+    if st.button("Upload and check a file", width="stretch"):
+        st.switch_page("data_page.py")
+    st.caption("The file is checked before it is used and stays in your browser session. "
+               "Predicted dormancy risk is not available for uploaded data.")
 with right, st.container(border=True):
     st.subheader("Explore the dataset")
     st.write("See customer status computed from Online Retail II (UCI), Dec 2009 – Dec 2011.")
@@ -33,9 +34,9 @@ st.subheader("What you'll see")
 items = [
     ("Current customer status", "Engaged, approaching dormancy, or dormant as of a chosen date.", ""),
     ("Activity summaries", "Recency, frequency, and spend for each customer.", ""),
-    ("Segment counts", "How many customers fall into each status.", ""),
+    ("Segment counts", "How many customers fall into each status and each RFM segment.", ""),
     ("Purchase histories", "A timeline of each customer's purchases.", ""),
-    ("Dormancy risk for active customers", "Likelihood that a currently active customer becomes dormant.", "Planned"),
+    ("Dormancy risk models", "Alert timing and model sensitivity for Online Retail II. Exploratory; no customer is scored.", "Offline analysis"),
     ("Ranked list for your capacity N", "Top N customers to contact, limited to your outreach capacity.", ""),
 ]
 for row in (items[:3], items[3:]):

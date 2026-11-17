@@ -2,7 +2,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from shared import SOURCE, controls, load_invoices, show_timeline
+from shared import controls, dataset, show_timeline
 
 WARNING_WINDOW = 30  # days before the threshold that count as "approaching"
 COLORS = {"Engaged": "#4a7fb0", "Approaching dormancy": "#d9a441", "Dormant": "#9a9a9a"}
@@ -16,11 +16,12 @@ def classify(recency, threshold):
     return "Engaged"
 
 
-all_tx = load_invoices()
+all_tx, DATA = dataset()
+CUR = DATA["currency"]
 DATA_START, DATA_END = all_tx["date"].min().date(), all_tx["date"].max().date()
 
 st.title("Customer Status")
-st.caption(f"{SOURCE}. Status is relative to the chosen “as of” date inside the dataset, not to today.")
+st.caption(f"{DATA['source']}. Status is relative to the chosen “as of” date inside the dataset, not to today.")
 
 c1, c2, c3 = st.columns(3)
 as_of, threshold = controls(c1, c2, DATA_START, DATA_END)
@@ -28,8 +29,8 @@ top_n = c3.slider("Contact-list size N", 5, 30, 10)
 
 st.info(
     f"**Dataset history:** {DATA_START:%d %b %Y} – {DATA_END:%d %b %Y} · **As of:** {as_of:%d %b %Y}. "
-    f"Only purchases on or before the as-of date are used. The final dataset day ({DATA_END:%d %b %Y}) is partial: "
-    "purchases stop at midday.",
+    "Only purchases on or before the as-of date are used."
+    + (f" The final dataset day ({DATA_END:%d %b %Y}) is partial: purchases stop at midday." if DATA["bundled"] else ""),
     icon="📅",
 )
 
@@ -45,7 +46,7 @@ with st.expander("Definitions and provisional segment rules", expanded=True):
         """
 **Recency** – days from the last valid purchase to the “as of” date.
 **Frequency** – number of distinct valid invoices up to the “as of” date.
-**Monetary** – gross spend on valid invoices up to the “as of” date (£, returns not netted).
+**Monetary** – gross spend on valid invoices up to the “as of” date (returns not netted).
 """
     )
     d2.markdown(
@@ -100,19 +101,14 @@ st.subheader("Selected customer purchase timeline")
 default = priority.index[0] if len(priority) else rfm.index[0]
 cust = st.selectbox("Customer", rfm.index, index=list(rfm.index).index(default))
 ct = tx[tx["customer"] == cust]
-show_timeline(ct, DATA_START, as_of, threshold)
+show_timeline(ct, DATA_START, as_of, threshold, CUR)
 r = rfm.loc[cust]
-st.caption(f"Customer {cust}: recency {r.recency} days · frequency {r.frequency} · monetary £{r.monetary:,.2f} · **{r.status}**")
+st.caption(f"Customer {cust}: recency {r.recency} days · frequency {r.frequency} · monetary {CUR}{r.monetary:,.2f} · **{r.status}**")
 
 st.subheader("Future dormancy risk")
-st.caption("Predicted risk for currently active customers will appear here once a model has been trained and evaluated. Not available yet.")
-p = st.columns(4)
-for col, (t, d) in zip(p, [
-    ("Dormancy prediction", "Forecast which active customers will cross the threshold in the next period."),
-    ("Model comparison", "Compare simple RFM rules against statistical / ML models."),
-    ("Calibration", "Check whether predicted risks match observed dormancy rates."),
-    ("Alert-timing evaluation", "Measure how early customers are flagged before crossing the threshold."),
-]):
-    with col.container(border=True):
-        st.markdown(f"**{t}** · :orange-badge[Planned]")
-        st.caption(d)
+st.caption(
+    "This page shows status and a rule-based list only; no customer here has a predicted risk. Dormancy-risk models for "
+    "Online Retail II are evaluated offline and are not validated for use. See **Alert timing** and **Model sensitivity** "
+    "in the sidebar for what that analysis shows and its limits."
+    + ("" if DATA["bundled"] else " Those models were built on Online Retail II and do not apply to uploaded data.")
+)
