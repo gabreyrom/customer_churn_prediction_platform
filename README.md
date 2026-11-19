@@ -8,7 +8,8 @@ who is **engaged**, who is **approaching dormancy**, and who is already **dorman
 to help a retention team decide whom to contact when it can reach only a limited number of
 customers.
 
-> **Current stage: November 26 milestone (alert timing, model sensitivity, compatible datasets).**
+> **Current stage: fixed-window modeling iteration, after the November 26 milestone (alert timing, model
+> sensitivity, compatible datasets).** The new model comparison is offline only; the website is unchanged by it.
 >
 > - **On the website:** rule-based customer status and watchlist, descriptive
 >   [RFM lifecycle segments](#rfm-lifecycle-segments), an [upload workflow](#using-your-own-data) for
@@ -518,8 +519,10 @@ python evaluate_models.py    # Nov 19 evaluation -> processed/model_evaluation.m
 python segments.py           # segment counts and later dormancy -> processed/segment_evaluation.md
 python alert_timing.py       # Nov 26 alert timing -> processed/alert_timing.md
 python sensitivity.py        # Nov 26 sensitivity -> processed/sensitivity_model.json, processed/model_sensitivity.md
+python fixed_window.py       # fixed-window features and model comparison -> processed/fixed_window_evaluation.md
 python test_snapshots.py && python test_baselines.py && python test_evaluation.py && python test_segments.py \
-  && python test_alerts.py && python test_sensitivity.py && python test_upload.py   # checks
+  && python test_alerts.py && python test_sensitivity.py && python test_upload.py \
+  && python test_fixed_window.py   # checks
 ```
 
 The modeling scripts need pandas and numpy; `evaluate_models.py` also needs matplotlib
@@ -559,6 +562,53 @@ independent recomputation of 1,000 rows, and a truncation test for future data).
 - **Top-N capture measures predictive targeting, not the effect of contacting customers.**
 - Generated tables, predictions and model files live in `data/`, which is gitignored.
 
+### Fixed-window features and model comparison
+
+Report: [`processed/fixed_window_evaluation.md`](processed/fixed_window_evaluation.md), from
+`python fixed_window.py` (about 25 seconds; it rebuilds the snapshots in memory from `processed/` and needs
+matplotlib through `evaluate_models.py`). The cumulative-feature pipeline and its reports are untouched,
+and the old models are refitted by the old code as comparators. Nothing here is used by the website.
+
+- **Features on each weekly scoring date:** recency; invoices and gross spend in the last 365 or 180
+  days; purchase days in the window; cancellation count and net spend in the window; tenure capped at
+  the window length. Only invoices and cancellations dated on or before the scoring date are used, and
+  the population is unchanged.
+- **Main concern found:** no training scoring date has a full 365-day window, because the data start a
+  year before training ends. In training the 365-day features equal the cumulative ones, so `fw365` has
+  the same coefficients as the old `rfm-elig` and only its later inputs differ. A 180-day window is
+  complete from 29 May 2010, so the `fw180` models are fitted on those dates only.
+- **Candidates:** `fw365`, `fw180`, `fw180-days` (purchase days instead of invoices), `fw180-net` (net
+  spend and cancellation count). Baselines: constant, eligible-group constant, `recency-elig`, the old
+  `rfm-elig`, and the website rule as a ranker. All models are fitted on eligible training rows and
+  return 0 for customers who cannot reach 90 days within the horizon. No recalibration.
+- **Roles:** fit on train, compare and select on validation, test reported afterwards as exploratory.
+  Censored labels are dropped. **Neither later period is a fresh holdout:** both were examined in
+  earlier milestones.
+- **Selection rule, written before the first run:** a candidate must beat `recency-elig` on eligible
+  validation Brier score with a customer-bootstrap 95% interval excluding zero, and stay within 1 point of
+  the website rule's top-100 capture. Otherwise `recency-elig` stays.
+- **Result (validation, eligible customers):**
+
+  | Horizon | Selected | Brier: `recency-elig` → best fixed-window | AUC: `recency-elig` → fixed-window | Top-100 capture: rule → model |
+  |---|---|---|---|---|
+  | 30 days | `recency-elig` (no candidate qualifies) | 0.0846 → 0.0834 (interval spans zero) | 0.69 → 0.75–0.77 | 21.5% → 21.7% |
+  | 60 days | `fw180-days` | 0.1537 → 0.1448 | 0.75 → 0.80–0.81 | 11.0% → 11.0% |
+  | 90 days (exploratory) | `fw180-days` | 0.1824 → 0.1602 | 0.78 → 0.85 | 7.7% → 7.8% |
+
+- **Reading:**
+  - Fixed windows improve probabilities at 60 and 90 days, not at 30.
+  - They do not improve ranking beyond what the old cumulative model already had.
+  - They do not improve short contact lists: the rule-based watchlist is as good.
+  - Every model under-predicts on validation (60 days: 0.68 predicted vs 0.78 observed), partly because
+    training has no winter dates.
+  - Purchase days and net spend make no measurable difference; the three 180-day models are one candidate.
+  - Exploratory only: when all models are refitted through June 2011, `fw365` overtakes `fw180`. The
+    180-day advantage comes from the short training history, not from the window itself.
+- **Recommendation:** the 180-day model at the 60-day horizon is ready for *additional evaluation*, not for
+  use. The report's Section 9 gives the confirmation plan (freeze, score forward, wait for outcomes, evaluate
+  once, at least a year) and what an external dataset would have to offer; none was checked. Section 10
+  separates this course demonstration from evidence sufficient for production.
+
 ---
 
 ## Project status
@@ -577,10 +627,11 @@ independent recomputation of 1,000 rows, and a truncation test for future data).
 | RFM lifecycle segments: eight groups plus a recently acquired flag (trailing 365-day window, fixed Dec 2010 cutoffs) | ✅ On the website (`segments_page.py`). Descriptive, not a prediction |
 | Shared observation date and threshold across pages; conditional dormancy date on the timeline | ✅ Works |
 | Later dormancy by segment | ✅ Done, offline (`processed/segment_evaluation.md`) |
-| Window-stable features in the models and a prospective holdout | ⏳ Next step |
+| Fixed-window features and pre-specified model comparison | ✅ Done, offline (`fixed_window.py`). Exploratory: no fresh holdout |
+| Prospective (frozen-model) or external confirmation | ⏳ Not possible within this dataset; plan in `processed/fixed_window_evaluation.md` |
 | Alert-timing analysis (60 / 30 / 7 days before observed dormancy) | ✅ Done, offline (`alert_timing.py`); report shown on the website. Retrospective, exploratory |
 | Model sensitivity | ✅ On the website for hypothetical inputs (`sensitivity_page.py`), plus an offline report. Model not validated |
-| Model-based alerts and per-customer predictions on the website | ⛔ Blocked: needs window-stable features and a prospective holdout. The site still shows the rule-based watchlist |
+| Model-based alerts and per-customer predictions on the website | ⛔ Blocked: needs a frozen model confirmed on later or external data. The site still shows the rule-based watchlist |
 | Predictions for uploaded data | ⛔ Not available: needs model training or transfer validation on that data |
 | Chatbot | ⏳ Scheduled for December 3 |
 | Deployment to Streamlit Community Cloud | ✅ Live at https://gabriel-reynoso-customer-churn.streamlit.app (rule-based watchlist only) |
@@ -606,6 +657,7 @@ predicted risk for any customer and no outreach-effect values.
 ├── upload.py               # Uploaded table -> canonical invoice table, validation, template and sample files
 ├── sensitivity.py          # Model equation from the stored coefficients; run it to rebuild them and the report
 ├── alert_timing.py         # Offline: lead-time matching, event-aligned and band tables
+├── fixed_window.py         # Offline: fixed-window features, pre-specified model comparison, confirmation plan
 ├── segments.py             # RFM table, reference cutoffs, segment mapping, flag; run it for the offline summary
 ├── shared.py               # Dataset in use, shared date/threshold controls and purchase timeline
 ├── prepare_data.py         # Rebuilds processed/ from the raw UCI workbook
@@ -619,12 +671,14 @@ predicted risk for any customer and no outreach-effect values.
 │                           #   shared controls, insufficient data (the page checks need streamlit)
 ├── test_alerts.py          # Checks for lead matching, information boundaries, incomplete follow-up, top-N ties
 ├── test_sensitivity.py     # Checks for the stored model, eligibility boundary, impossible profiles, page labels
+├── test_fixed_window.py    # Checks for window edges, cut-off dates, histories, censoring, fit/evaluation separation
 ├── test_upload.py          # Checks for aggregation, row rules, duplicates, blocking errors, own cutoffs,
 │                           #   the minimum template, pages
 ├── processed/              # invoices.csv.gz (used by the site), cancellations.csv.gz, data_quality.md,
 │                           #   snapshot_audit.md, baseline_results.md, model_evaluation.md,
 │                           #   reliability_eligible.png, segment_evaluation.md, alert_timing.md,
-│                           #   model_sensitivity.md, sensitivity_model.json (read by the site)
+│                           #   model_sensitivity.md, sensitivity_model.json (read by the site),
+│                           #   fixed_window_evaluation.md
 ├── requirements.txt        # streamlit, pandas, altair, numpy
 ├── .streamlit/config.toml  # Theme and upload size limit
 ├── artifacts/submission5/  # Current screenshots of both pages
